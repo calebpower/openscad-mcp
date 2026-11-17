@@ -1,0 +1,3 @@
+            if abs(_dot(dir_a, dir_b)) < parallel_cos:
+                skew += 1
+                continue

@@ -1,0 +1,1 @@
+cd ../openscad-mcp && uv run pytest tests/test_check.py::TestCoincidentRule -q --no-cov --color=no

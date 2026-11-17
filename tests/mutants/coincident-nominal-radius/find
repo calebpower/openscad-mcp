@@ -1,0 +1,2 @@
+            r_a = f_a.nominal_d_mm / 2.0
+            r_b = f_b.nominal_d_mm / 2.0

@@ -1,0 +1,2 @@
+            r_a = f_a.effective_min_d_mm / 2.0
+            r_b = f_b.effective_min_d_mm / 2.0

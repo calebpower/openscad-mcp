@@ -1,0 +1,1 @@
+"wall_bracket_mm": [round(wall, 4), round(wall_best, 4)],

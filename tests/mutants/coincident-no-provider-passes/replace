@@ -1,0 +1,6 @@
+        if self.coincident_provider is None:
+            return [
+                {
+                    "rule": "coincident",
+                    "subject": [],
+                    "status": "PASS",

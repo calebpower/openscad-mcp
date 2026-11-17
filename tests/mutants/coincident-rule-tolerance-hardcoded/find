@@ -1,0 +1,1 @@
+tol = float(rule.get("tolerance_mm", 0.1))
