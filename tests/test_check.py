@@ -580,3 +580,190 @@ class TestExpressionsReal:
         assert row["magnitude"]["required_mm"] == 2
         assert row["magnitude"]["distance_mm"] == pytest.approx(2.0, abs=1e-6)
         assert row["status"] == "PASS"
+
+
+
+
+class TestCoincidentRule:
+    """Feature boundaries with no wall left between them. No OpenSCAD needed.
+
+    Two individually correct features can leave each other no material, and
+    each reads as fine on its own -- which is why this is a check and not an
+    eyeball.
+    """
+
+    @staticmethod
+    def _feature(x_mm, d_mm, *, fn=64, polarity="subtractive", axis=(0.0, 0.0, 1.0)):
+        """One cylindrical feature on a vertical axis at x = ``x_mm``."""
+        from openscad_mcp.csgfeatures import CylFeature
+        from openscad_mcp.geom import inscribed_polygon_error
+
+        r = d_mm / 2.0
+        undersize = inscribed_polygon_error(r, fn)
+        return CylFeature(
+            kind="cylinder",
+            polarity=polarity,
+            axis_point=(x_mm, 0.0, 0.0),
+            axis_dir=axis,
+            entry=(x_mm, 0.0, 10.0),
+            exit=(x_mm, 0.0, 0.0),
+            nominal_d_mm=d_mm,
+            length_mm=10.0,
+            segments=fn,
+            fn=fn,
+            fa=12.0,
+            fs=2.0,
+            effective_min_d_mm=d_mm - 2.0 * undersize,
+            undersize_mm=undersize,
+            path=["difference", "cylinder"],
+            center=False,
+        )
+
+    @staticmethod
+    def _engine(provider):
+        from openscad_mcp.assembly import Assembly
+        from openscad_mcp.checks import RuleEngine
+
+        return RuleEngine(
+            Assembly(parts=[]),
+            {},
+            Quality(fn=64, curved_radius_mm=3.0),
+            coincident_provider=provider,
+        )
+
+    def _find(self, parts, tol=0.1):
+        from openscad_mcp.csgfeatures import coincident_features
+
+        return coincident_features(parts, tolerance_mm=tol)
+
+    def test_a_healthy_wall_reports_nothing(self):
+        """The control. Without it a rule that always fires would pass."""
+        out = self._find({"p": [self._feature(0.0, 6.0), self._feature(10.0, 6.0)]})
+        assert out["pairs"] == []
+        assert out["counts"]["subtractive_features"] == 2
+
+    def test_two_bores_sharing_a_wall_of_zero_are_tangent(self):
+        out = self._find({"p": [self._feature(0.0, 6.0), self._feature(6.0, 6.0)]})
+        assert len(out["pairs"]) == 1
+        pair = out["pairs"][0]
+        assert pair["state"] == "tangent"
+        assert pair["wall_mm"] == 0.0
+
+    def test_two_bores_that_overlap_are_merged(self):
+        """The failing case: the wall the author drew is not there at all."""
+        out = self._find({"p": [self._feature(0.0, 6.0), self._feature(5.5, 6.0)]})
+        assert len(out["pairs"]) == 1
+        assert out["pairs"][0]["state"] == "merged"
+        assert out["pairs"][0]["wall_mm"] == -0.5
+
+    def test_the_worst_case_wall_is_the_nominal_radius_not_the_faceted_one(self):
+        """`cylinder($fn=n)` puts its vertices ON the nominal circle.
+
+        So a bore reaches full nominal radius at every vertex, and the wall is
+        thinnest where two vertices face each other. The faceted radius gives
+        the THICKEST wall, not the thinnest, and reporting it alone would
+        claim more material than the part has anywhere. The first version of
+        this function had exactly that backwards.
+        """
+        out = self._find({"p": [self._feature(0.0, 6.0, fn=8), self._feature(6.05, 6.0, fn=8)]})
+        pair = out["pairs"][0]
+        worst, best = pair["wall_bracket_mm"]
+        assert worst == pair["wall_mm"], "the reported wall is the worst case"
+        assert best > worst, "the faceted wall is thicker, so it is the other end"
+        # At $fn=8 the undersize is large enough to be unmistakable.
+        assert best - worst > 0.3, f"bracket {pair['wall_bracket_mm']}"
+
+    def test_features_in_one_part_are_compared(self):
+        """The defect does not need two parts."""
+        out = self._find({"solo": [self._feature(0.0, 6.0), self._feature(5.8, 6.0)]})
+        assert len(out["pairs"]) == 1
+        assert out["pairs"][0]["same_part"] is True
+
+    def test_additive_features_are_not_compared(self):
+        out = self._find(
+            {
+                "p": [
+                    self._feature(0.0, 6.0, polarity="additive"),
+                    self._feature(5.5, 6.0, polarity="additive"),
+                ]
+            }
+        )
+        assert out["pairs"] == []
+        assert out["counts"]["subtractive_features"] == 0
+
+    def test_non_parallel_pairs_are_counted_and_not_measured(self):
+        """One wall figure for two skew cylinders would be wrong somewhere."""
+        out = self._find(
+            {
+                "p": [
+                    self._feature(0.0, 6.0),
+                    self._feature(5.5, 6.0, axis=(1.0, 0.0, 0.0)),
+                ]
+            }
+        )
+        assert out["pairs"] == []
+        assert out["counts"]["skew_pairs_not_measured"] == 1
+
+    def test_the_rule_fails_on_a_merged_pair(self):
+        rows = self._engine(
+            lambda tol: self._find({"p": [self._feature(0.0, 6.0), self._feature(5.0, 6.0)]}, tol)
+        ).rule_coincident({})
+        assert len(rows) == 1
+        assert rows[0]["rule"] == "coincident"
+        assert rows[0]["status"] == "FAIL"
+        assert rows[0]["state"] == "merged"
+        assert "quality" in rows[0]
+        assert rows[0]["magnitude"]["tolerance_mm"] == 0.1
+
+    def test_the_rule_passes_with_one_row_when_nothing_is_coincident(self):
+        rows = self._engine(
+            lambda tol: self._find({"p": [self._feature(0.0, 6.0), self._feature(20.0, 6.0)]}, tol)
+        ).rule_coincident({})
+        assert len(rows) == 1
+        assert rows[0]["status"] == "PASS"
+        assert "no feature pair" in rows[0]["note"]
+
+    def test_a_wall_inside_the_tessellation_bound_is_unresolved(self):
+        """A positive wall thinner than the facet error is not a FAIL.
+
+        It is a figure this method cannot stand behind. A MERGED pair is
+        different -- no tessellation error explains a negative wall away.
+        """
+        from openscad_mcp.geom import inscribed_polygon_error, segments_for
+
+        bound = inscribed_polygon_error(3.0, segments_for(3.0, 64))
+        gap = bound / 2.0
+        rows = self._engine(
+            lambda tol: self._find(
+                {"p": [self._feature(0.0, 6.0), self._feature(6.0 + gap, 6.0)]}, tol
+            )
+        ).rule_coincident({})
+        assert len(rows) == 1
+        assert rows[0]["status"] == "UNRESOLVED", rows[0]
+        assert rows[0]["magnitude"]["wall_mm"] > 0.0
+
+    def test_a_merged_pair_is_not_excused_by_the_tessellation_bound(self):
+        rows = self._engine(
+            lambda tol: self._find({"p": [self._feature(0.0, 6.0), self._feature(5.99, 6.0)]}, tol)
+        ).rule_coincident({})
+        assert rows[0]["status"] == "FAIL"
+        assert rows[0]["magnitude"]["wall_mm"] < 0.0
+
+    def test_the_rule_is_unresolved_without_a_provider(self):
+        rows = self._engine(None).rule_coincident({})
+        assert rows[0]["status"] == "UNRESOLVED"
+        assert "no feature provider" in rows[0]["note"]
+
+    def test_the_rule_tolerance_comes_from_the_rule(self):
+        """Configurable per rule: two rules in one file may reasonably differ."""
+        parts = {"p": [self._feature(0.0, 6.0), self._feature(6.5, 6.0)]}
+        engine = self._engine(lambda tol: self._find(parts, tol))
+        assert engine.rule_coincident({})[0]["status"] == "PASS"
+        loose = engine.rule_coincident({"tolerance_mm": 1.0})
+        assert loose[0]["status"] in {"FAIL", "UNRESOLVED"}
+        assert loose[0]["magnitude"]["tolerance_mm"] == 1.0
+
+    def test_coincident_is_a_known_rule(self):
+        from openscad_mcp.assembly import KNOWN_RULES
+
+        assert "coincident" in KNOWN_RULES

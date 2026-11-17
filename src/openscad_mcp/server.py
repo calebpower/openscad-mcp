@@ -4365,6 +4365,17 @@ async def check(
                     tolerance_mm=float(tolerance_mm or 0.2),
                 )
 
+            def coincident_provider(tol: float) -> Dict[str, Any]:
+                from . import csgfeatures
+
+                # The tolerance is the RULE's, not this tool's: a wall is
+                # judged against the process that has to print it, and two
+                # rules in one check file may reasonably differ.
+                return csgfeatures.coincident_features(
+                    {n: list(fs.features) for n, fs in features_by_part.items()},
+                    tolerance_mm=tol,
+                )
+
             def volume_cross_check(a: str, b: str) -> Optional[float]:
                 if not volume:
                     return None
@@ -4403,6 +4414,7 @@ async def check(
                 asm, meshes, qual,
                 predicate_runner=predicate_runner,
                 feature_provider=feature_provider if features_by_part else None,
+                coincident_provider=coincident_provider if features_by_part else None,
                 printability_provider=printability_provider,
                 volume_cross_check=volume_cross_check if volume else None,
             )

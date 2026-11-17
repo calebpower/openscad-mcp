@@ -695,6 +695,16 @@ checks:
   - rule: alignment
     tolerance_mm: 0.2         # max coaxial offset between hole stacks
 
+  - rule: coincident
+    tolerance_mm: 0.1         # report a wall at or below this, including <= 0
+    why: "no knife-edge wall between bores"
+    # The wall between two parallel subtractive features is
+    # axis_distance - (r_a + r_b) on the NOMINAL radii: cylinder($fn=n) puts
+    # its vertices on the nominal circle, so a bore reaches full radius there
+    # and that is the thinnest the wall ever gets. wall_bracket_mm carries the
+    # faceted end too. state is "tangent" at zero and "merged" below it.
+    # Non-parallel pairs are counted and not measured.
+
   - rule: predicate
     expr: "bore_d > pin_d"    # evaluated in the model's own scope, must be true
 

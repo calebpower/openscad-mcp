@@ -320,6 +320,7 @@ KNOWN_RULES = {
     "clearance",
     "contact",
     "alignment",
+    "coincident",
     "predicate",
     "probe",
     "ray",

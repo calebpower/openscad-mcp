@@ -120,6 +120,10 @@ check(scad_file="assembly.scad", mode="interference",
   turn, adds a certificate that says whether the parts can *ever* touch.
 - `mode="alignment"` is the only check that sees a 0.6 mm hole misalignment:
   interference and clearance both read zero there.
+- `rule: coincident` in a check file reports feature boundaries with no wall
+  left between them -- `axis_distance - (r_a + r_b)` on the nominal radii, so
+  the figure is the thinnest the wall ever gets. Two holes that each read
+  correctly can still merge into one void; this is the check that says so.
 - `rule: mass` in a check file limits total mass, centre-of-mass offset from an
   axis or point, and inertia about an axis, composed from the exported meshes
   with each part's `mass_g`, `material` or `density_g_cm3` (PLA if none, flagged).

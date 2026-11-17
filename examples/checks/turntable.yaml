@@ -110,6 +110,15 @@ checks:
     tolerance_mm: 0.2
     why: the bracket hole must be coaxial with the hole in the plate
 
+  # coincident: two individually correct features can leave each other no
+  # material. The wall is measured on the NOMINAL radii, which is the worst
+  # case -- a faceted bore reaches full radius at every vertex -- and
+  # wall_bracket_mm carries the faceted end. UNRESOLVED for a positive wall
+  # inside the tessellation bound; a merged pair is never excused that way.
+  - rule: coincident
+    tolerance_mm: 0.1
+    why: bores must not share a wall thinner than the nozzle can print
+
   # predicate: an OpenSCAD boolean expression evaluated against the model, so
   # it can read the model's own variables.
   - rule: predicate

@@ -1282,6 +1282,110 @@ def _align_entry(part: str, f: CylFeature) -> dict[str, Any]:
     }
 
 
+def coincident_features(
+    parts: dict[str, list[CylFeature]],
+    tolerance_mm: float = 0.1,
+    max_reported: int = 50,
+) -> dict[str, Any]:
+    """Feature boundaries that land on each other, leaving no wall between them.
+
+    Two parallel subtractive features whose axes sit ``d`` apart with radii
+    ``r_a`` and ``r_b`` have ``d - (r_a + r_b)`` of material between their
+    walls. At zero the two bores are tangent; below zero they have merged into
+    one void. Either way the wall the author drew is not there, and both
+    features look correct read on their own -- which is why this is worth a
+    check rather than an eyeball.
+
+    Every part's features must already be in the assembly frame (see
+    :func:`transform_features`). Features within a single part are compared too:
+    the defect does not need two parts.
+
+    The wall is reported at its WORST, and the worst case is the nominal
+    diameter rather than the faceted one. ``cylinder($fn=n)`` puts its polygon
+    vertices ON the nominal circle and its edge midpoints inside it, so a
+    subtractive feature reaches full nominal radius at every vertex. Two bores
+    are therefore thinnest-walled when a vertex of each points at the other --
+    ``d - (r_nominal_a + r_nominal_b)`` -- and thickest when facets face,
+    ``d - (r_effective_a + r_effective_b)``. Both are carried, as
+    ``wall_mm`` and ``wall_bracket_mm``, because the faceted figure alone
+    would report more material than the part can have anywhere.
+
+    Non-parallel axes are reported separately rather than measured: the wall
+    between two skew cylinders varies along their length, so a single figure
+    for it would be wrong somewhere. Those pairs carry ``state: "skew"`` and no
+    wall figure.
+
+    Args:
+        parts: features per part, in the assembly frame.
+        tolerance_mm: a wall at or below this is reported. The caller's process
+            tolerance belongs here, not a geometric epsilon -- a 0.05 mm wall
+            is real geometry and an unprintable part.
+        max_reported: pairs are truncated to this; the full count stays in
+            ``counts``.
+
+    Returns:
+        ``{"pairs", "counts"}``. Each pair carries both features, the axis
+        distance, the two effective radii, the wall between them, and a
+        plain-language ``reading``.
+    """
+    items: list[tuple[str, CylFeature]] = [
+        (part, f) for part, feats in parts.items() for f in feats if f.polarity == "subtractive"
+    ]
+    parallel_cos = math.cos(math.radians(0.5))
+
+    pairs: list[dict[str, Any]] = []
+    skew = 0
+    for index, (part_a, f_a) in enumerate(items):
+        for part_b, f_b in items[index + 1 :]:
+            dir_a = _canonical_dir(f_a.axis_dir)
+            dir_b = _canonical_dir(f_b.axis_dir)
+            if abs(_dot(dir_a, dir_b)) < parallel_cos:
+                skew += 1
+                continue
+            distance = _perp_distance(f_a.axis_point, f_b.axis_point, dir_a)
+            # WORST CASE FIRST: the polygon's vertices sit on the nominal
+            # circle, so a bore reaches full nominal radius and the wall is at
+            # its thinnest where two vertices face each other.
+            r_a = f_a.nominal_d_mm / 2.0
+            r_b = f_b.nominal_d_mm / 2.0
+            wall = distance - (r_a + r_b)
+            # And the other end of the bracket, where facets face.
+            wall_best = distance - (f_a.effective_min_d_mm + f_b.effective_min_d_mm) / 2.0
+            if wall > tolerance_mm:
+                continue
+            state = "merged" if wall < 0.0 else "tangent"
+            reading = (
+                f"{_short_fit_label(f_a.nominal_d_mm)} and {_short_fit_label(f_b.nominal_d_mm)} "
+                f"leave {wall:+.3f} mm of wall"
+            )
+            if part_a != part_b:
+                reading += f" across {part_a}, {part_b}"
+            pairs.append(
+                {
+                    "a": _align_entry(part_a, f_a),
+                    "b": _align_entry(part_b, f_b),
+                    "state": state,
+                    "axis_distance_mm": round(distance, 4),
+                    "nominal_radii_mm": [round(r_a, 4), round(r_b, 4)],
+                    "wall_mm": round(wall, 4),
+                    "wall_bracket_mm": [round(wall, 4), round(wall_best, 4)],
+                    "same_part": part_a == part_b,
+                    "reading": reading,
+                }
+            )
+    pairs.sort(key=lambda p: p["wall_mm"])
+    return {
+        "pairs": pairs[:max_reported],
+        "counts": {
+            "pairs": len(pairs),
+            "merged": sum(1 for p in pairs if p["state"] == "merged"),
+            "tangent": sum(1 for p in pairs if p["state"] == "tangent"),
+            "skew_pairs_not_measured": skew,
+            "subtractive_features": len(items),
+        },
+    }
+
+
 def align_features(
     parts: dict[str, list[CylFeature]],
     tolerance_mm: float = 0.2,

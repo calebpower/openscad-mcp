@@ -126,7 +126,8 @@ class RuleEngine:
 
     ``meshes`` maps part name -> :class:`geom.Mesh` in the assembly frame.
     ``predicate_runner`` and ``feature_provider`` are supplied by the server
-    for rules that need OpenSCAD (predicates) or the CSG dump (alignment).
+    for rules that need OpenSCAD (predicates) or the CSG dump (alignment,
+    coincident).
     """
 
     def __init__(
@@ -136,6 +137,7 @@ class RuleEngine:
         quality: Quality,
         predicate_runner: Optional[Callable[[List[str]], List[Dict[str, Any]]]] = None,
         feature_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+        coincident_provider: Optional[Callable[[float], Dict[str, Any]]] = None,
         printability_provider: Optional[Callable[[str, Dict[str, Any]], Dict[str, Any]]] = None,
         volume_cross_check: Optional[Callable[[str, str], Optional[float]]] = None,
     ):
@@ -144,6 +146,7 @@ class RuleEngine:
         self.quality = quality
         self.predicate_runner = predicate_runner
         self.feature_provider = feature_provider
+        self.coincident_provider = coincident_provider
         self.printability_provider = printability_provider
         self.volume_cross_check = volume_cross_check
         self._relations: Dict[Tuple[str, str], geom.PairRelation] = {}
@@ -556,6 +559,95 @@ class RuleEngine:
                     "status": "PASS",
                     "axes": len(result.get("axes", [])),
                     "note": "no misaligned coaxial features",
+                }
+            )
+        return rows
+
+    def rule_coincident(self, rule: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Report feature boundaries with no wall left between them.
+
+        Two individually correct features can leave each other no material.
+        The wall is ``axis_distance - (r_a + r_b)`` on the FACETED radii, so
+        the figure describes the shape that gets printed rather than the ideal
+        one.
+        """
+        if self.coincident_provider is None:
+            return [
+                {
+                    "rule": "coincident",
+                    "subject": [],
+                    "status": "UNRESOLVED",
+                    "note": "no feature provider (CSG dump) available",
+                }
+            ]
+        tol = float(rule.get("tolerance_mm", 0.1))
+        result = self.coincident_provider(tol)
+        why = rule.get("why", f"feature walls must be thicker than {tol} mm")
+        bound = self.quality.error_bound_mm()
+        rows = []
+        for pair in result.get("pairs", []):
+            wall = float(pair["wall_mm"])
+            row = {
+                "rule": "coincident",
+                "subject": [pair["a"].get("part"), pair["b"].get("part")],
+                "status": "FAIL",
+                "state": pair["state"],
+                "magnitude": {
+                    "wall_mm": round(wall, 4),
+                    "wall_bracket_mm": pair["wall_bracket_mm"],
+                    "axis_distance_mm": pair["axis_distance_mm"],
+                    "nominal_radii_mm": pair["nominal_radii_mm"],
+                    "tolerance_mm": tol,
+                },
+                "reading": pair["reading"],
+                "same_part": pair["same_part"],
+                "quality": self.quality.to_dict(),
+                "tier": "python",
+                "why": why,
+            }
+            # A WALL INSIDE THE TESSELLATION BOUND IS UNRESOLVED, NOT FAILED.
+            # A faceted bore's surface sits inside its ideal radius, so a wall
+            # thinner than that error is a number this method cannot stand
+            # behind -- except when the bores have plainly merged, which no
+            # tessellation error explains away.
+            if bound is not None and wall >= 0.0 and wall < bound:
+                _unresolved(row, bound)
+            rows.append(row)
+        if not rows:
+            rows.append(
+                {
+                    "rule": "coincident",
+                    "subject": [],
+                    "status": "PASS",
+                    "magnitude": {
+                        "tolerance_mm": tol,
+                        "subtractive_features": result.get("counts", {}).get(
+                            "subtractive_features", 0
+                        ),
+                    },
+                    "quality": self.quality.to_dict(),
+                    "tier": "python",
+                    "why": why,
+                    "note": "no feature pair leaves a wall at or below the tolerance",
+                }
+            )
+        # SKEW PAIRS WERE NOT MEASURED AND THE REPORT SAYS SO. The wall between
+        # two non-parallel cylinders varies along their length, so one figure
+        # for it would be wrong somewhere; silently dropping them would make a
+        # partial sweep read as a complete one.
+        skew = int(result.get("counts", {}).get("skew_pairs_not_measured", 0))
+        if skew:
+            rows.append(
+                {
+                    "rule": "coincident",
+                    "subject": [],
+                    "status": "UNRESOLVED",
+                    "state": "skew",
+                    "magnitude": {"pairs": skew},
+                    "note": (
+                        f"{skew} non-parallel feature pair(s) were not measured: the wall "
+                        "between two skew cylinders varies along their length"
+                    ),
                 }
             )
         return rows
