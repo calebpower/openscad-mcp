@@ -1,0 +1,7 @@
+FAILED tests/test_evals.py::TestReferenceSelfTest::test_reference_command_exits_zero
+FAILED tests/test_evals.py::TestReferenceSelfTest::test_reference_solutions_score_100_percent
+FAILED tests/test_geometry_tools.py::TestToolsReal::test_composite_modes_work_on_bosl2_files
+FAILED tests/test_geometry_tools.py::TestToolsReal::test_measure_model
+FAILED tests/test_phase4_tools.py::TestAnchors::test_anchor_frames_follow_placement
+FAILED tests/test_phase4_tools.py::TestBosl2Lint::test_autofix_rewrites_when_safe
+FAILED tests/test_phase4_tools.py::TestBosl2Lint::test_lint_flags_attach_child_from_used_file
